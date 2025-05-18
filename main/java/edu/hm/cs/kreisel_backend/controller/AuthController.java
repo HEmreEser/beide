@@ -10,6 +10,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -43,7 +44,37 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest request) {
-        // Dummy Response – JWT Token Auth wird später gemacht
-        return ResponseEntity.ok("Login erfolgreich (Platzhalter)");
+        Optional<User> userOpt = userRepository.findByEmail(request.getEmail());
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.status(401).body("User nicht gefunden");
+        }
+
+        User user = userOpt.get();
+        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            return ResponseEntity.status(401).body("Falsches Passwort");
+        }
+
+        // Dummy token für Testzwecke – JWT kann später eingebaut werden
+        String token = "dummy-token-" + user.getId();
+
+        // Gib Token als JSON zurück
+        return ResponseEntity.ok(new TokenResponse(token));
+    }
+
+    // Hilfsklasse für das Token-Response-Objekt
+    public static class TokenResponse {
+        private String token;
+
+        public TokenResponse(String token) {
+            this.token = token;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        public void setToken(String token) {
+            this.token = token;
+        }
     }
 }
