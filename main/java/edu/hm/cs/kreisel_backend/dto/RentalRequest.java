@@ -10,14 +10,15 @@ import java.time.LocalDate;
 @Getter
 public class RentalRequest {
 
-    // Getter & Setter
-    @NotNull
+    @NotNull(message = "Equipment ID is required")
     private Long equipmentId;
 
-    @NotNull
+    @NotNull(message = "Start date is required")
     private LocalDate startDate;
 
-    @NotNull
+    @NotNull(message = "End date is required")
     private LocalDate endDate;
 
+    // Optional field for testing without authentication
+    private Long userId;
 }
