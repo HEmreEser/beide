@@ -1,149 +1,287 @@
-import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:kreisel_frontend/models/user_model.dart';
+import 'package:kreisel_frontend/models/item_model.dart';
+import 'package:kreisel_frontend/models/rental_model.dart';
+import 'package:kreisel_frontend/pages/login_page.dart';
+import 'package:kreisel_frontend/pages/home_page.dart';
+import 'package:kreisel_frontend/pages/my_rentals_page.dart';
+import 'package:kreisel_frontend/services/api_service.dart';
 
+// API Service
 class ApiService {
-  static final Dio _dio = Dio(
-      BaseOptions(
-        baseUrl: 'http://localhost:8080/api',
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 10),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ),
-    )
-    ..interceptors.add(
-      InterceptorsWrapper(
-        onError: (DioException e, handler) {
-          print('=== API Error ===');
-          print('Request URL: ${e.requestOptions.uri}');
-          print('Request Method: ${e.requestOptions.method}');
-          print('Request Data: ${e.requestOptions.data}');
-          print('Response Status: ${e.response?.statusCode}');
-          print('Response Data: ${e.response?.data}');
-          print('Error Message: ${e.message}');
-          print('================');
-          return handler.next(e);
-        },
-      ),
+  static const String baseUrl = 'http://localhost:8080/api';
+  static User? currentUser;
+
+  static Future<User> login(String email, String password) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/login'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email, 'password': password}),
     );
 
-  static void setToken(String? token) {
-    if (token != null) {
-      _dio.options.headers['Authorization'] = 'Bearer $token';
+    if (response.statusCode == 200) {
+      final user = User.fromJson(jsonDecode(response.body));
+      currentUser = user;
+      return user;
     } else {
-      _dio.options.headers.remove('Authorization');
+      throw Exception('Login fehlgeschlagen');
     }
   }
 
-  // Auth
-  static Future<Map<String, dynamic>> login(
+  static Future<User> register(
+    String fullName,
     String email,
     String password,
   ) async {
-    final res = await _dio.post(
-      '/auth/login',
-      data: {'email': email, 'password': password},
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/register'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'fullName': fullName,
+        'email': email,
+        'password': password,
+      }),
     );
-    return res.data;
+
+    if (response.statusCode == 200) {
+      final user = User.fromJson(jsonDecode(response.body));
+      currentUser = user;
+      return user;
+    } else {
+      throw Exception('Registrierung fehlgeschlagen');
+    }
   }
 
-  static Future<Map<String, dynamic>> register(
-    String email,
-    String password,
-  ) async {
-    final res = await _dio.post(
-      '/auth/register',
-      data: {'email': email, 'password': password},
-    );
-    return res.data;
-  }
-
-  // Equipment
-  static Future<List<dynamic>> getEquipment({
+  static Future<List<Item>> getItems({
+    required String location,
+    bool? available,
+    String? searchQuery,
+    String? gender,
     String? category,
-    String? location,
+    String? subcategory,
+    String? size,
   }) async {
-    String endpoint = '/equipment';
-    if (category != null) {
-      endpoint = '/equipment/category/$category';
-    } else if (location != null) {
-      endpoint = '/equipment/location/$location';
+    var params = {'location': location};
+    if (available != null) params['available'] = available.toString();
+    if (searchQuery != null && searchQuery.isNotEmpty)
+      params['searchQuery'] = searchQuery;
+    if (gender != null) params['gender'] = gender;
+    if (category != null) params['category'] = category;
+    if (subcategory != null) params['subcategory'] = subcategory;
+    if (size != null) params['size'] = size;
+
+    final uri = Uri.parse('$baseUrl/items').replace(queryParameters: params);
+    final response = await http.get(uri);
+
+    if (response.statusCode == 200) {
+      List<dynamic> jsonList = jsonDecode(response.body);
+      return jsonList.map((json) => Item.fromJson(json)).toList();
+    } else {
+      throw Exception('Fehler beim Laden der Items');
     }
-    final res = await _dio.get(endpoint);
-    return res.data;
   }
+}
 
-  // Equipment Management (Admin)
-  static Future<Map<String, dynamic>> createEquipment({
-    required String name,
-    required String description,
-    required String category,
-    required bool available,
-  }) async {
-    final res = await _dio.post(
-      '/equipment',
-      data: {
-        'name': name,
-        'description': description,
-        'category': category,
-        'available': available,
-      },
+class ApiServiceExtension {
+  static Future<void> rentItem(int itemId, String formattedDate) async {
+    final userId = ApiService.currentUser?.userId;
+    if (userId == null) {
+      throw Exception('Benutzer nicht angemeldet.');
+    }
+
+    final response = await http.post(
+      Uri.parse('${ApiService.baseUrl}/rentals/user/$userId/rent'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'itemId': itemId, 'endDate': formattedDate}),
     );
-    return res.data;
+
+    if (response.statusCode != 200) {
+      final errorData = jsonDecode(response.body);
+      throw Exception(errorData['message'] ?? 'Ausleihe fehlgeschlagen');
+    }
   }
 
-  static Future<void> deleteEquipment(int equipmentId) async {
-    await _dio.delete('/equipment/$equipmentId');
+  static Future<List<Rental>> getUserRentals() async {
+    final response = await http.get(
+      Uri.parse(
+        '${ApiService.baseUrl}/rentals/user/${ApiService.currentUser?.userId}',
+      ),
+    );
+
+    if (response.statusCode == 200) {
+      List<dynamic> jsonList = jsonDecode(response.body);
+      return jsonList.map((json) => Rental.fromJson(json)).toList();
+    } else {
+      throw Exception('Fehler beim Laden der Ausleihen');
+    }
   }
 
-  // Rentals
-  static Future<List<dynamic>> getMyRentals() async {
+  static Future<void> returnItem(int rentalId) async {
+    final response = await http.put(
+      Uri.parse('${ApiService.baseUrl}/rentals/$rentalId/return'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Rückgabe fehlgeschlagen');
+    }
+  }
+
+  static Future<void> extendRental(int rentalId, DateTime newEndDate) async {
+    final formattedDate =
+        "${newEndDate.year}-${newEndDate.month.toString().padLeft(2, '0')}-${newEndDate.day.toString().padLeft(2, '0')}";
+
+    final response = await http.put(
+      Uri.parse('${ApiService.baseUrl}/rentals/$rentalId/extend'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'newEndDate': formattedDate}),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Verlängerung fehlgeschlagen');
+    }
+  }
+}
+
+class RentItemDialog extends StatefulWidget {
+  final Item item;
+  final VoidCallback onRented;
+
+  RentItemDialog({required this.item, required this.onRented});
+
+  @override
+  _RentItemDialogState createState() => _RentItemDialogState();
+}
+
+class _RentItemDialogState extends State<RentItemDialog> {
+  int selectedMonths = 1; // Standard: 1 Monat
+  bool isLoading = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final returnDate = _calculateReturnDate();
+    final formattedDate =
+        "${returnDate.year}-${returnDate.month.toString().padLeft(2, '0')}-${returnDate.day.toString().padLeft(2, '0')}";
+
+    return CupertinoAlertDialog(
+      title: Text('${widget.item.name} ausleihen'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(height: 16),
+          if (widget.item.brand != null)
+            Text(
+              'Marke: ${widget.item.brand}',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          if (widget.item.size != null)
+            Text(
+              'Größe: ${widget.item.size}',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          SizedBox(height: 16),
+          Text('Ausleihdauer wählen:'),
+          SizedBox(height: 16),
+          CupertinoSegmentedControl<int>(
+            groupValue: selectedMonths,
+            children: {
+              1: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text('1 Month'),
+              ),
+              2: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text('2 Months'),
+              ),
+              3: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text('3 Months'),
+              ),
+            },
+            onValueChanged: (int value) {
+              setState(() {
+                selectedMonths = value;
+              });
+            },
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Rückgabedatum: $formattedDate',
+            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue),
+          ),
+        ],
+      ),
+      actions: [
+        CupertinoDialogAction(
+          child: Text('Abbrechen'),
+          onPressed: () => Navigator.pop(context),
+        ),
+        CupertinoDialogAction(
+          child:
+              isLoading
+                  ? CupertinoActivityIndicator()
+                  : Text(
+                    'Jetzt ausleihen',
+                    style: TextStyle(color: Colors.white),
+                  ),
+          onPressed: isLoading ? null : _rentItem,
+        ),
+      ],
+    );
+  }
+
+  DateTime _calculateReturnDate() {
+    return DateTime.now().add(Duration(days: 30 * selectedMonths));
+  }
+
+  void _rentItem() async {
+    setState(() => isLoading = true);
+
     try {
-      final res = await _dio.get('/rentals/user');
-      return res.data;
+      final returnDate = _calculateReturnDate();
+      final formattedDate =
+          "${returnDate.year}-${returnDate.month.toString().padLeft(2, '0')}-${returnDate.day.toString().padLeft(2, '0')}";
+
+      await ApiServiceExtension.rentItem(widget.item.id, formattedDate);
+      Navigator.pop(context);
+      widget.onRented();
+
+      showCupertinoDialog(
+        context: context,
+        builder:
+            (context) => CupertinoAlertDialog(
+              title: Text('Erfolgreich ausgeliehen'),
+              content: Text(
+                '${widget.item.name} wurde bis zum $formattedDate reserviert.',
+              ),
+              actions: [
+                CupertinoDialogAction(
+                  child: Text('OK'),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+      );
     } catch (e) {
-      print('Error getting rentals: $e');
-      rethrow;
+      print('Fehler beim Ausleihen: $e');
+      showCupertinoDialog(
+        context: context,
+        builder:
+            (context) => CupertinoAlertDialog(
+              title: Text('Fehler beim Ausleihen'),
+              content: Text(e.toString()),
+              actions: [
+                CupertinoDialogAction(
+                  child: Text('OK'),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+      );
+    } finally {
+      if (mounted) setState(() => isLoading = false);
     }
-  }
-
-  static Future<Map<String, dynamic>> createRental(
-    int equipmentId,
-    String startDate,
-    String endDate,
-  ) async {
-    final res = await _dio.post(
-      '/rentals',
-      data: {
-        'equipmentId': equipmentId,
-        'startDate': startDate,
-        'endDate': endDate,
-      },
-    );
-    return res.data;
-  }
-
-  static Future<Map<String, dynamic>> returnRental(int rentalId) async {
-    final res = await _dio.post('/rentals/$rentalId/return');
-    return res.data;
-  }
-
-  // Reviews
-  static Future<List<dynamic>> getReviews(int equipmentId) async {
-    final res = await _dio.get('/equipment/$equipmentId/reviews');
-    return res.data;
-  }
-
-  static Future<Map<String, dynamic>> createReview({
-    required int equipmentId,
-    required int rating,
-    required String comment,
-  }) async {
-    final res = await _dio.post(
-      '/equipment/$equipmentId/reviews',
-      data: {'rating': rating, 'comment': comment},
-    );
-    return res.data;
   }
 }
